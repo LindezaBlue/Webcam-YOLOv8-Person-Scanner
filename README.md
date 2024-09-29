@@ -32,3 +32,9 @@ When a person is detected an alarm sound will play and the person on the preview
 > [!NOTE]
 > Updates and changes will be made as I work on it, please feel free to let me know of any issues or changes that should be made. I am new to programming and can use any feedback. 
 > Thank you!~
+
+## TODO List:
+- [ ] Add the ability to scan a specified window to detect a person for non-webcam feeds _(ie. for a security camera that can be view from a computer but is not recognized as a webcam)_
+- [ ] Add automatic log creattion for error reporting using the **"traceback logs"** folder.
+- [ ] Add a menu bar at the top of the preview window to allow the user to exit the program, and change the method of video feed capture.
+- [ ] Optimize the startup process to not auto-reinstall dependancies when they are already installed on the system.
