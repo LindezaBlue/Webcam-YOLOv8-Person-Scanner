@@ -1,0 +1,14 @@
+v0.1.6a
+- Added more detailed print statements after each package.
+- Improved error handling in the main function and the script entry point.
+- Added a check to ensure the camera can be opened before proceeding.
+- Added traceback printing for more detailed error information.
+- Added input prompts to keep the console window open in case of errors, allowing you to read the error messages. (will change to output to a log folder later)
+- Updated the package installation process.
+- When you close the preview window, the terminal should now halt all activty.
+- The alert sound now plays only once when a person is detected. 
+(There's a 10-second delay between detections.)
+- Removed bounding boxes for objects that are not persons.
+- Reduced the font size for the person detection label.
+- Centered the label above the red bounding box.
+- Added code to set the window icon using the "Icon.ico" file from the "data" folder.
