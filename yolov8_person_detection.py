@@ -11,36 +11,52 @@ def install_package(package):
         subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", package],
                               stdout=subprocess.DEVNULL,
                               stderr=subprocess.DEVNULL)
+        print(f"Successfully installed {package}")
     except subprocess.CalledProcessError:
         print(f"\033[91mError installing {package}\033[0m")
 
-def ensure_package(package):
-    try:
-        __import__(package)
-    except ImportError:
-        print(f"\033[90m{package} not found. Installing...\033[0m")
-        install_package(package)
+def ensure_packages(packages):
+    missing_packages = [pkg for pkg in packages if pkg not in sys.modules]
+    if missing_packages:
+        print("\033[90mInstalling missing dependencies...", end="", flush=True)
+        for _ in range(10):
+            time.sleep(0.2)
+            print(".", end="", flush=True)
+        print("\033[0m")
+        for package in missing_packages:
+            install_package(package)
 
 # Ensure required packages are installed
 required_packages = ['opencv-python', 'ultralytics', 'torch', 'torchvision', 'tqdm', 'colorama', 'playsound']
-for package in required_packages:
-    ensure_package(package)
+ensure_packages(required_packages)
 
 # Now that we've ensured the packages are installed, we can import them
 try:
     import cv2
+    print("OpenCV version:", cv2.__version__)
+    
     from ultralytics import YOLO
+    print("Ultralytics imported successfully")
+    
     import torch
+    print(f"PyTorch version: {torch.__version__}")
+    print(f"CUDA available: {torch.cuda.is_available()}")
+    
     from tqdm import tqdm
+    print("tqdm imported successfully")
+    
     import colorama
-    from playsound import playsound
     colorama.init(autoreset=True)
     from colorama import Fore, Back, Style
+    print("Colorama initialized successfully")
     
-    print(f"{Fore.LIGHTBLACK_EX}PyTorch version: {torch.__version__}")
-    print(f"{Fore.LIGHTBLACK_EX}CUDA available: {torch.cuda.is_available()}")
+    from playsound import playsound
+    print("Playsound imported successfully")
+    
 except Exception as e:
-    print(f"{Fore.RED}Error importing required packages: {e}")
+    print(f"\033[91mError importing required packages: {e}\033[0m")
+    print("Please check your Python environment and try again.")
+    input("Press Enter to exit...")
     sys.exit(1)
 
 def save_screenshot(frame, detection_count):
@@ -69,13 +85,21 @@ def draw_colored_boxes(img, results):
             c = box.cls
             conf = box.conf[0]
             label = f"{results[0].names[int(c)]} {conf:.2f}"
-            color = (0, 0, 255) if results[0].names[int(c)] == "person" else (128, 128, 128)
-            cv2.rectangle(img, (int(b[0]), int(b[1])), (int(b[2]), int(b[3])), color, 2)
-            
-            # Improve label readability
-            text_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-            cv2.rectangle(img, (int(b[0]), int(b[1]) - text_size[1] - 10), (int(b[0]) + text_size[0], int(b[1])), color, -1)
-            cv2.putText(img, label, (int(b[0]), int(b[1]) - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            if results[0].names[int(c)] == "person":
+                color = (0, 0, 255)  # Red color for person
+                cv2.rectangle(img, (int(b[0]), int(b[1])), (int(b[2]), int(b[3])), color, 2)
+                
+                # Calculate text size and position for centered label
+                text_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0]
+                text_x = int(b[0] + (b[2] - b[0]) / 2 - text_size[0] / 2)
+                text_y = int(b[1] - 5)
+                
+                # Draw background rectangle for text
+                cv2.rectangle(img, (text_x - 2, text_y - text_size[1] - 2),
+                              (text_x + text_size[0] + 2, text_y + 2), color, -1)
+                
+                # Draw centered text
+                cv2.putText(img, label, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
     return img
 
 def main():
@@ -85,10 +109,33 @@ def main():
         print(f"{Fore.LIGHTBLACK_EX}YOLO model loaded successfully.")
 
         cap = cv2.VideoCapture(0)
-        cv2.namedWindow("Object Detection", cv2.WINDOW_NORMAL)
-        cv2.resizeWindow("Object Detection", 800, 600)
+        if not cap.isOpened():
+            print("\033[91mError: Unable to open camera.\033[0m")
+            return
+
+        window_name = "Object Detection"
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(window_name, 800, 600)
+        
+        # Set window icon (this won't work on all systems, but we'll keep the code)
+        icon_path = os.path.join(os.path.dirname(__file__), 'data', 'Icon.ico')
+        if os.path.exists(icon_path):
+            try:
+                import win32gui
+                import win32con
+                import win32api
+                hwnd = win32gui.FindWindow(None, window_name)
+                icon_handle = win32gui.LoadImage(0, icon_path, win32con.IMAGE_ICON, 0, 0, win32con.LR_LOADFROMFILE)
+                win32api.SendMessage(hwnd, win32con.WM_SETICON, win32con.ICON_SMALL, icon_handle)
+                win32api.SendMessage(hwnd, win32con.WM_SETICON, win32con.ICON_BIG, icon_handle)
+            except ImportError:
+                print(f"{Fore.YELLOW}Warning: Unable to set window icon. 'pywin32' module not found.")
+        else:
+            print(f"{Fore.YELLOW}Warning: Icon file not found at {icon_path}")
 
         detection_count = 0
+        last_detection_time = 0
+        sound_played = False
 
         while cap.isOpened():
             success, frame = cap.read()
@@ -100,16 +147,21 @@ def main():
                 
                 annotated_frame = draw_colored_boxes(frame, results)
 
+                current_time = time.time()
                 person_detected = any(results[0].names[int(box.cls)] == "person" and box.conf[0] >= 0.5 for box in results[0].boxes)
-                if person_detected:
+                if person_detected and (current_time - last_detection_time) > 10:
                     detection_count += 1
                     save_screenshot(frame, detection_count)
-                    try:
-                         # Construct the full path to the alert.mp3 file in the data folder
-                        sound_path = os.path.join(os.path.dirname(__file__), 'data', 'alert.mp3')
-                        playsound(sound_path)
-                    except Exception as e:
-                        print(f"{Fore.RED}Error playing sound: {e}")
+                    last_detection_time = current_time
+                    if not sound_played:
+                        try:
+                            sound_path = os.path.join(os.path.dirname(__file__), 'data', 'alert.mp3')
+                            playsound(sound_path)
+                            sound_played = True
+                        except Exception as e:
+                            print(f"{Fore.RED}Error playing sound: {e}")
+                elif not person_detected:
+                    sound_played = False
 
                 detection_info = f"{results[0].speed['inference']:.1f}ms inference"
                 status_text = "Person Detected!" if person_detected else "Scanning..."
@@ -120,9 +172,9 @@ def main():
                 cv2.putText(annotated_frame, status_text, (10, frame.shape[0] - 10),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, status_color, 2)
 
-                cv2.imshow("Object Detection", annotated_frame)
+                cv2.imshow(window_name, annotated_frame)
 
-                if cv2.waitKey(1) & 0xFF == ord('q'):
+                if cv2.waitKey(1) & 0xFF == ord('q') or cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
                     break
             else:
                 print("Failed to capture frame. Retrying...")
@@ -132,14 +184,25 @@ def main():
 
         cap.release()
         cv2.destroyAllWindows()
+        os._exit(0)  # Force exit the program when the window is closed
 
     except Exception as e:
         print(f"{Fore.RED}An error occurred: {e}")
+        import traceback
+        traceback.print_exc()
+        input("Press Enter to exit...")
         sys.exit(1)
 
 if __name__ == "__main__":
-    for i in tqdm(range(100), desc="Initializing", bar_format="{l_bar}%s{bar}%s{r_bar}" % (Fore.BLUE, Fore.RESET)):
-        time.sleep(0.02)
-    print(f"{Fore.LIGHTBLACK_EX}Initialization complete.")
-    
-    main()
+    try:
+        for i in tqdm(range(100), desc="Initializing", bar_format="{l_bar}%s{bar}%s{r_bar}" % (Fore.BLUE, Fore.RESET)):
+            time.sleep(0.02)
+        print(f"{Fore.LIGHTBLACK_EX}Initialization complete.")
+        
+        main()
+    except Exception as e:
+        print(f"{Fore.RED}An unexpected error occurred: {e}")
+        import traceback
+        traceback.print_exc()
+        input("Press Enter to exit...")
+        sys.exit(1)
