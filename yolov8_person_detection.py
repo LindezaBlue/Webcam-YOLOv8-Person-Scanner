@@ -5,6 +5,8 @@ import os
 from datetime import datetime
 import io
 import contextlib
+import numpy as np
+import traceback
 
 def install_package(package):
     try:
@@ -77,7 +79,7 @@ def save_screenshot(frame, detection_count):
     cv2.imwrite(filepath, frame)
     print(f"{Fore.LIGHTBLACK_EX}Screenshot saved: {filepath}")
 
-def draw_colored_boxes(img, results):
+def draw_colored_boxes(img, results, motion_boxes):
     for r in results:
         boxes = r.boxes
         for box in boxes:
@@ -100,7 +102,66 @@ def draw_colored_boxes(img, results):
                 
                 # Draw centered text
                 cv2.putText(img, label, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    
+    # Draw motion boxes
+    for box in motion_boxes:
+        x, y, w, h = box
+        cv2.rectangle(img, (x, y), (x + w, y + h), (128, 128, 128), 2)  # Grey color for motion
+        cv2.putText(img, "motion", (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (128, 128, 128), 1)
+    
     return img
+
+def detect_motion(frame, prev_frame, threshold=30):
+    if prev_frame is None:
+        return []
+    
+    frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    prev_frame_gray = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY)
+    
+    frame_diff = cv2.absdiff(frame_gray, prev_frame_gray)
+    _, thresh = cv2.threshold(frame_diff, threshold, 255, cv2.THRESH_BINARY)
+    
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    motion_boxes = []
+    for contour in contours:
+        if cv2.contourArea(contour) > 100:  # Adjust this value to change sensitivity
+            x, y, w, h = cv2.boundingRect(contour)
+            motion_boxes.append((x, y, w, h))
+    
+    return motion_boxes
+
+def log_error(error_message):
+    now = datetime.now()
+    date_str = now.strftime("%m-%d-%Y")
+    log_folder = "traceback logs"
+    os.makedirs(log_folder, exist_ok=True)
+    
+    log_file = os.path.join(log_folder, f"log_{date_str}.txt")
+    
+    with open(log_file, "a") as f:
+        f.write(f"[{now.strftime('%Y-%m-%d %H:%M:%S')}] {error_message}\n")
+        f.write(traceback.format_exc())
+        f.write("\n\n")
+
+def set_window_icon(window_name):
+    icon_path = os.path.join(os.path.dirname(__file__), 'data', 'Icon.ico')
+    if os.path.exists(icon_path):
+        try:
+            import win32gui
+            import win32con
+            import win32api
+            hwnd = win32gui.FindWindow(None, window_name)
+            icon_handle = win32gui.LoadImage(0, icon_path, win32con.IMAGE_ICON, 0, 0, win32con.LR_LOADFROMFILE)
+            win32api.SendMessage(hwnd, win32con.WM_SETICON, win32con.ICON_SMALL, icon_handle)
+            win32api.SendMessage(hwnd, win32con.WM_SETICON, win32con.ICON_BIG, icon_handle)
+            print(f"{Fore.LIGHTBLACK_EX}Window icon set successfully.")
+        except ImportError:
+            print(f"{Fore.YELLOW}Warning: Unable to set window icon. 'pywin32' module not found.")
+        except Exception as e:
+            print(f"{Fore.YELLOW}Warning: Failed to set window icon. Error: {e}")
+    else:
+        print(f"{Fore.YELLOW}Warning: Icon file not found at {icon_path}")
 
 def main():
     try:
@@ -117,38 +178,30 @@ def main():
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(window_name, 800, 600)
         
-        # Set window icon (this won't work on all systems, but we'll keep the code)
-        icon_path = os.path.join(os.path.dirname(__file__), 'data', 'Icon.ico')
-        if os.path.exists(icon_path):
-            try:
-                import win32gui
-                import win32con
-                import win32api
-                hwnd = win32gui.FindWindow(None, window_name)
-                icon_handle = win32gui.LoadImage(0, icon_path, win32con.IMAGE_ICON, 0, 0, win32con.LR_LOADFROMFILE)
-                win32api.SendMessage(hwnd, win32con.WM_SETICON, win32con.ICON_SMALL, icon_handle)
-                win32api.SendMessage(hwnd, win32con.WM_SETICON, win32con.ICON_BIG, icon_handle)
-            except ImportError:
-                print(f"{Fore.YELLOW}Warning: Unable to set window icon. 'pywin32' module not found.")
-        else:
-            print(f"{Fore.YELLOW}Warning: Icon file not found at {icon_path}")
+        # Set the window icon
+        set_window_icon(window_name)
 
         detection_count = 0
         last_detection_time = 0
         sound_played = False
+        prev_frame = None
 
         while cap.isOpened():
             success, frame = cap.read()
 
             if success:
+                # Detect motion
+                motion_boxes = detect_motion(frame, prev_frame)
+                prev_frame = frame.copy()
+
                 # Suppress print output from YOLO
                 with contextlib.redirect_stdout(io.StringIO()):
                     results = model(frame)
                 
-                annotated_frame = draw_colored_boxes(frame, results)
+                annotated_frame = draw_colored_boxes(frame, results, motion_boxes)
 
                 current_time = time.time()
-                person_detected = any(results[0].names[int(box.cls)] == "person" and box.conf[0] >= 0.5 for box in results[0].boxes)
+                person_detected = any(results[0].names[int(box.cls)] == "person" and box.conf[0] >= 0.30 for box in results[0].boxes)
                 if person_detected and (current_time - last_detection_time) > 10:
                     detection_count += 1
                     save_screenshot(frame, detection_count)
@@ -160,12 +213,20 @@ def main():
                             sound_played = True
                         except Exception as e:
                             print(f"{Fore.RED}Error playing sound: {e}")
+                            log_error(f"Error playing sound: {e}")
                 elif not person_detected:
                     sound_played = False
 
                 detection_info = f"{results[0].speed['inference']:.1f}ms inference"
-                status_text = "Person Detected!" if person_detected else "Scanning..."
-                status_color = (0, 0, 255) if person_detected else (255, 0, 0)
+                if person_detected:
+                    status_text = "Person Detected!"
+                    status_color = (0, 0, 255)  # Red
+                elif motion_boxes:
+                    status_text = "Motion Detected!"
+                    status_color = (128, 128, 128)  # Grey
+                else:
+                    status_text = "Scanning..."
+                    status_color = (255, 0, 0)  # Blue
 
                 cv2.putText(annotated_frame, detection_info, (10, frame.shape[0] - 40),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
@@ -187,9 +248,9 @@ def main():
         os._exit(0)  # Force exit the program when the window is closed
 
     except Exception as e:
-        print(f"{Fore.RED}An error occurred: {e}")
-        import traceback
-        traceback.print_exc()
+        error_message = f"An error occurred: {e}"
+        print(f"{Fore.RED}{error_message}")
+        log_error(error_message)
         input("Press Enter to exit...")
         sys.exit(1)
 
@@ -201,8 +262,8 @@ if __name__ == "__main__":
         
         main()
     except Exception as e:
-        print(f"{Fore.RED}An unexpected error occurred: {e}")
-        import traceback
-        traceback.print_exc()
+        error_message = f"An unexpected error occurred: {e}"
+        print(f"{Fore.RED}{error_message}")
+        log_error(error_message)
         input("Press Enter to exit...")
         sys.exit(1)
