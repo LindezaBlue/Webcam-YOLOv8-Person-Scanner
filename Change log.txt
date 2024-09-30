@@ -1,3 +1,12 @@
+v0.1.7a
+- Added a new function to detect motion between consecutive frames.
+- Modified the function to include drawing grey bounding boxes for detected motion.
+(Note) The program does not save images or play sounds for motion detection.
+- Changed the confidence threshold for person detection from 0.5 to 0.3
+- Added a new function to handle error logging (buggy)
+- Added error handling to provide informative messages if the icon can't be set.
+- Modified the status text logic in the main loop to include a "Motion Detected!" status
+
 v0.1.6a
 - Added more detailed print statements after each package.
 - Improved error handling in the main function and the script entry point.
